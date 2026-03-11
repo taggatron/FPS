@@ -319,11 +319,7 @@ export class Game {
 
   resetWorld() {
     this.state.reset();
-
-    for (const e of this.dinosaurs.enemies) {
-      this.scene.remove(e.mesh);
-    }
-    this.dinosaurs.enemies.length = 0;
+    this.dinosaurs.clearAll();
     this.dinosaurs.spawnInitial();
 
     for (const p of this.city.pickups) {

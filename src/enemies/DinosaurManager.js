@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { SpatialHashGrid } from '../engine/spatial/SpatialHashGrid.js';
+import { ECSWorld } from '../engine/ecs/World.js';
+import { DinosaurAISystem } from '../game/systems/DinosaurAISystem.js';
 
 const TYPES = {
   raptor: {
@@ -49,12 +51,12 @@ export class DinosaurManager {
     this.loadingProgress = 0;
     this.loadingSubscribers = [];
 
-    this.tmpToPlayer = new THREE.Vector3();
-    this.tmpDesired = new THREE.Vector3();
     this.tmpImpact = new THREE.Vector3();
     this.hitTargets = [];
     this.spatialQuery = [];
     this.spatial = new SpatialHashGrid(36);
+    this.ecs = new ECSWorld();
+    this.aiSystem = new DinosaurAISystem(this.terrainHeightFn, this.spatial);
 
     this.apexModelTemplate = null;
     this.apexAnimations = [];
@@ -222,20 +224,37 @@ export class DinosaurManager {
     group.rotation.y = Math.random() * Math.PI * 2;
     this.scene.add(group);
 
+    const entity = this.ecs.createEntity();
+    const aiTarget = new THREE.Vector3(x, y, z);
+    const motionVelocity = new THREE.Vector3();
+    const motionDesired = new THREE.Vector3();
+    const damagePos = new THREE.Vector3();
+
+    this.ecs.addComponent(entity, 'dino', { typeName, type });
+    this.ecs.addComponent(entity, 'ai', {
+      state: 'roam',
+      target: aiTarget,
+      attackCd: 0,
+      anim: Math.random() * Math.PI * 2,
+      alive: true
+    });
+    this.ecs.addComponent(entity, 'motion', {
+      velocity: motionVelocity,
+      desired: motionDesired
+    });
+    this.ecs.addComponent(entity, 'combat', {
+      health: type.health,
+      damagePos
+    });
+    this.ecs.addComponent(entity, 'render', { mesh: group });
+    this.ecs.addComponent(entity, 'animation', { legs, mixer });
+
     this.enemies.push({
+      entity,
       typeName,
       type,
       mesh: group,
-      legs,
       health: type.health,
-      state: 'roam',
-      target: new THREE.Vector3(x, y, z),
-      velocity: new THREE.Vector3(),
-      desired: new THREE.Vector3(),
-      damagePos: new THREE.Vector3(),
-      attackCd: 0,
-      anim: Math.random() * Math.PI * 2,
-      mixer,
       alive: true
     });
   }
@@ -251,75 +270,13 @@ export class DinosaurManager {
       this.spawn(type, playerPos);
     }
 
-    for (const e of this.enemies) {
-      if (!e.alive) continue;
+    this.aiSystem.update(this.ecs, dt, playerPos, onDamagePlayer);
 
-      e.anim += dt * (e.type.speed * 0.8);
-      if (e.mixer) e.mixer.update(dt);
-
-      const toPlayer = this.tmpToPlayer.copy(playerPos).sub(e.mesh.position);
-      const dist = toPlayer.length();
-
-      if (dist < e.type.detection) {
-        e.state = dist < 3.5 + e.type.radius ? 'attack' : 'chase';
-      } else if (e.state !== 'roam') {
-        e.state = 'roam';
-        e.target.set(
-          e.mesh.position.x + (Math.random() - 0.5) * 40,
-          e.mesh.position.y,
-          e.mesh.position.z + (Math.random() - 0.5) * 40
-        );
-      }
-
-      const desired = e.desired || this.tmpDesired;
-
-      if (e.state === 'roam') {
-        desired.copy(e.target).sub(e.mesh.position);
-        if (desired.length() < 2) {
-          e.target.set(
-            e.mesh.position.x + (Math.random() - 0.5) * 45,
-            e.mesh.position.y,
-            e.mesh.position.z + (Math.random() - 0.5) * 45
-          );
-          desired.copy(e.target).sub(e.mesh.position);
-        }
-      } else {
-        desired.copy(toPlayer);
-      }
-
-      desired.y = 0;
-      if (desired.lengthSq() > 0.01) desired.normalize();
-
-      const stateSpeed = e.state === 'chase' || e.state === 'attack' ? e.type.speed : e.type.speed * 0.45;
-      e.velocity.lerp(desired.multiplyScalar(stateSpeed), dt * 3.5);
-
-      if (e.state === 'chase' && e.typeName === 'mauler' && dist < 14 && Math.random() < 0.02) {
-        e.velocity.multiplyScalar(2);
-      }
-
-      e.mesh.position.addScaledVector(e.velocity, dt);
-      const floor = this.terrainHeightFn(e.mesh.position.x, e.mesh.position.z) + 1.2;
-      e.mesh.position.y = floor;
-
-      if (e.velocity.lengthSq() > 0.001) {
-        const desiredRot = Math.atan2(e.velocity.x, e.velocity.z);
-        e.mesh.rotation.y = THREE.MathUtils.damp(e.mesh.rotation.y, desiredRot, 12, dt);
-      }
-
-      const step = Math.sin(e.anim * 4) * 0.35;
-      if (e.legs.length >= 2) {
-        e.legs[0].rotation.x = step;
-        e.legs[1].rotation.x = -step;
-      }
-
-      if (e.attackCd > 0) e.attackCd -= dt;
-      if (e.state === 'attack' && e.attackCd <= 0) {
-        e.damagePos.copy(e.mesh.position);
-        onDamagePlayer(e.type.damage, e.damagePos, e.typeName);
-        e.attackCd = e.typeName === 'raptor' ? 0.9 : e.typeName === 'mauler' ? 1.2 : 1.7;
-      }
-
-      this.spatial.insert(e, e.mesh.position.x, e.mesh.position.z);
+    for (const enemy of this.enemies) {
+      const ai = this.ecs.getComponent(enemy.entity, 'ai');
+      const combat = this.ecs.getComponent(enemy.entity, 'combat');
+      enemy.alive = !!ai?.alive;
+      if (combat) enemy.health = combat.health;
     }
   }
 
@@ -328,9 +285,10 @@ export class DinosaurManager {
 
     if (origin) {
       this.spatial.queryRadius(origin.x, origin.z, range + 8, this.spatialQuery);
-      for (const enemy of this.spatialQuery) {
-        if (!enemy.alive) continue;
-        this.hitTargets.push(enemy.mesh);
+      for (const found of this.spatialQuery) {
+        const ai = this.ecs.getComponent(found.entity, 'ai');
+        if (!ai?.alive) continue;
+        this.hitTargets.push(found.mesh);
       }
       return this.hitTargets;
     }
@@ -362,18 +320,25 @@ export class DinosaurManager {
 
     if (!hitEnemy) return null;
 
-    hitEnemy.health -= damage;
+    const combat = this.ecs.getComponent(hitEnemy.entity, 'combat');
+    const ai = this.ecs.getComponent(hitEnemy.entity, 'ai');
+    if (!combat || !ai) return null;
+
+    combat.health -= damage;
+    hitEnemy.health = combat.health;
     this.tmpImpact.copy(intersection.face?.normal || this.tmpImpact.set(0, 0, 1));
     hitEnemy.mesh.position.addScaledVector(this.tmpImpact, -0.2);
 
-    if (hitEnemy.health <= 0) {
+    if (combat.health <= 0) {
       hitEnemy.alive = false;
-      hitEnemy.state = 'dead';
+      ai.alive = false;
+      ai.state = 'dead';
       hitEnemy.mesh.traverse((o) => {
         if (o.isMesh) o.material.color.offsetHSL(0, -0.2, -0.2);
       });
       setTimeout(() => {
         this.scene.remove(hitEnemy.mesh);
+        this.ecs.removeEntity(hitEnemy.entity);
       }, 4500);
 
       return { killed: true, score: hitEnemy.type.score, type: hitEnemy.typeName };
@@ -383,6 +348,18 @@ export class DinosaurManager {
   }
 
   aliveCount() {
-    return this.enemies.filter((e) => e.alive).length;
+    let count = 0;
+    for (const e of this.enemies) {
+      if (e.alive) count += 1;
+    }
+    return count;
+  }
+
+  clearAll() {
+    for (const enemy of this.enemies) {
+      this.scene.remove(enemy.mesh);
+      this.ecs.removeEntity(enemy.entity);
+    }
+    this.enemies.length = 0;
   }
 }

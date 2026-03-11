@@ -76,62 +76,62 @@ Performance-oriented architecture is now split under src:
 - LOD is applied to apex dinosaur visuals and distant giant silhouettes.
 - Static node count and draw calls are reduced through batching and flattening.
 
-2. Game Loop Optimisation
+1. Game Loop Optimisation
 
 - Update and render are separated.
 - Fixed timestep simulation runs at 60 Hz.
 - Frame-rate dependent simulation drift is removed by stepping simulation in fixed slices.
 
-3. Memory Optimisation
+1. Memory Optimisation
 
 - Hot loops reuse vectors and temporary arrays.
 - Bullet/tracer visuals use object pooling (no per-shot geometry/material allocation).
 - City rebuild lifecycle includes controlled cleanup and disposal for generated resources.
 
-4. Parallel Processing
+1. Parallel Processing
 
 - AI and pathfinding workers are implemented and integrated via WorkerBridge.
 - Main thread posts periodic enemy/player snapshots to worker infrastructure.
 
-5. Scene Graph Optimisation
+1. Scene Graph Optimisation
 
 - Repeated decorative geometry is flattened with instancing.
 - Static road/highway meshes are batched.
 - Scene hierarchy is reduced where possible to lower traversal overhead.
 
-6. Spatial Acceleration Structures
+1. Spatial Acceleration Structures
 
 - Enemy broad-phase queries use SpatialHashGrid.
 - Shooting raycast candidate sets are spatially pruned instead of scanning all enemies.
 
-7. Asset Loading Improvements
+1. Asset Loading Improvements
 
 - Apex model uses lazy loading through AssetManager.
 - Region preload/unload APIs are available for level-streaming expansion.
 - Start menu load gating prevents entering combat before critical model readiness.
 
-8. Texture Optimisation Pipeline
+1. Texture Optimisation Pipeline
 
 - KTX2Loader support is wired in AssetManager.
 - Runtime still supports standard textures as fallback while enabling compressed texture rollout.
 
-9. Code Architecture
+1. Code Architecture
 
 - Added engine, game, and assets directory layout for scalable growth.
 - ECS foundation is present to migrate gameplay logic incrementally.
 
-10. Performance Diagnostics
+1. Performance Diagnostics
 
 - In-game debug overlay is enabled in development runtime.
 - Tracks FPS, frame time, draw calls, triangle count, and heap memory (when available).
 
-11. Web Worker Infrastructure
+1. Web Worker Infrastructure
 
 - Implemented:
 : src/workers/aiWorker.js
 : src/workers/pathWorker.js
 
-12. Optimisation Documentation
+1. Optimisation Documentation
 
 - Performance-critical classes include comments describing why each optimisation exists.
 

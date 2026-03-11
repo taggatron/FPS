@@ -24,6 +24,21 @@ export class ECSWorld {
     return this.components.get(name)?.get(entity);
   }
 
+  removeComponent(entity, name) {
+    this.components.get(name)?.delete(entity);
+  }
+
+  removeEntity(entity) {
+    for (const store of this.components.values()) {
+      store.delete(entity);
+    }
+  }
+
+  clear() {
+    this.components.clear();
+    this.nextEntity = 1;
+  }
+
   *view(...names) {
     if (!names.length) return;
     const base = this.components.get(names[0]);
