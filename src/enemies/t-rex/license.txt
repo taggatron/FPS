@@ -1,0 +1,11 @@
+Model Information:
+* title:	T-REX
+* source:	https://sketchfab.com/3d-models/t-rex-15d380651e0b4cc394ffa308d30e625e
+* author:	seth the yutyrannus (https://sketchfab.com/slang107123456789)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "T-REX" (https://sketchfab.com/3d-models/t-rex-15d380651e0b4cc394ffa308d30e625e) by seth the yutyrannus (https://sketchfab.com/slang107123456789) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
