@@ -12,6 +12,9 @@ import { FixedStepLoop } from '../engine/physics/FixedStepLoop.js';
 import { DebugOverlay } from '../engine/diagnostics/DebugOverlay.js';
 import { WorkerBridge } from '../engine/workers/WorkerBridge.js';
 import { AssetManager } from '../engine/assets/AssetManager.js';
+import { ECSWorld } from '../engine/ecs/World.js';
+import { SystemScheduler } from '../engine/ecs/SystemScheduler.js';
+import { PickupSystem } from '../game/systems/PickupSystem.js';
 
 export class Game {
   constructor(mountNode) {
@@ -55,6 +58,12 @@ export class Game {
     this.weapon = new WeaponSystem(this.camera, this.scene);
     this.dinosaurs = new DinosaurManager(this.scene, (x, z) => this.city.getTerrainHeight(x, z), this.assetManager);
     this.state = new GameState();
+    this.gameEcs = new ECSWorld();
+    this.systemScheduler = new SystemScheduler();
+    this.pickupSystem = new PickupSystem(this.gameEcs, this.player, (pickup) => {
+      if (pickup.type === 'health') this.state.heal(pickup.amount);
+      else this.weapon.addAmmo(pickup.amount);
+    });
     this.hud = new HUD(this.mountNode);
     this.sound = new Soundscape();
     this.debugOverlay = new DebugOverlay(this.mountNode);
@@ -103,6 +112,25 @@ export class Game {
     this.roarTimer = 0;
     this.invincibleMode = true;
     this.tmpKnockDir = new THREE.Vector3();
+
+    this.systemScheduler.add('player-update', 10, ({ dt }) => {
+      this.player.update(dt, (x, z) => this.city.getTerrainHeight(x, z));
+    });
+    this.systemScheduler.add('shoot', 20, () => {
+      this.processShooting();
+    });
+    this.systemScheduler.add('pickup', 30, ({ dt }) => {
+      this.pickupSystem.update(dt);
+    });
+    this.systemScheduler.add('dinos', 40, ({ dt }) => {
+      this.dinosaurs.update(dt, this.player.position, (dmg, enemyPos, typeName) => this.handlePlayerDamage(dmg, enemyPos, typeName));
+    });
+    this.systemScheduler.add('objectives', 50, ({ dt }) => {
+      this.processObjectives(dt);
+    });
+    this.systemScheduler.add('atmosphere', 60, ({ dt }) => {
+      this.updateAtmosphere(dt);
+    });
 
     this.setupLights();
     this.bindUI();
@@ -322,10 +350,13 @@ export class Game {
     this.dinosaurs.clearAll();
     this.dinosaurs.spawnInitial();
 
+    this.gameEcs.clear();
+
     for (const p of this.city.pickups) {
       p.active = true;
       p.mesh.visible = true;
     }
+    this.city.registerPickupsToECS(this.gameEcs);
 
     this.player.teleport(new THREE.Vector3(0, 46, 40));
   }
@@ -344,19 +375,6 @@ export class Game {
       );
 
       if (fired) this.sound.shot();
-    }
-  }
-
-  processPickups() {
-    for (const p of this.city.pickups) {
-      if (!p.active) continue;
-      if (p.mesh.position.distanceTo(this.player.position) < 1.4) {
-        p.active = false;
-        p.mesh.visible = false;
-
-        if (p.type === 'health') this.state.heal(p.amount);
-        else this.weapon.addAmmo(p.amount);
-      }
     }
   }
 
@@ -453,12 +471,7 @@ export class Game {
     }
 
     if (this.state.phase === GamePhase.PLAYING) {
-      this.player.update(dt, (x, z) => this.city.getTerrainHeight(x, z));
-      this.processShooting();
-      this.processPickups();
-      this.dinosaurs.update(dt, this.player.position, (dmg, enemyPos, typeName) => this.handlePlayerDamage(dmg, enemyPos, typeName));
-      this.processObjectives(dt);
-      this.updateAtmosphere(dt);
+      this.systemScheduler.update({ dt });
     }
 
     if (this.state.phase === GamePhase.PAUSED || this.state.phase === GamePhase.WON || this.state.phase === GamePhase.LOST) {

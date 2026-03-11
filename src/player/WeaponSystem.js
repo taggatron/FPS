@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ECSWorld } from '../engine/ecs/World.js';
 
 export class WeaponSystem {
   constructor(camera, scene) {
@@ -32,8 +33,9 @@ export class WeaponSystem {
     this.scene.add(this.muzzleFlash);
 
     this.shotParticles = [];
-    this.tracerPool = [];
-    this.activeTracers = [];
+    this.tracerWorld = new ECSWorld();
+    this.tracerPoolIds = [];
+    this.activeTracerIds = [];
 
     this.tracerGeometry = new THREE.SphereGeometry(0.05, 5, 5);
     this.createTracerPool(48);
@@ -47,7 +49,14 @@ export class WeaponSystem {
       const mesh = new THREE.Mesh(this.tracerGeometry, mat);
       mesh.visible = false;
       this.scene.add(mesh);
-      this.tracerPool.push({ mesh, vel: new THREE.Vector3(), life: 0 });
+      const entity = this.tracerWorld.createEntity();
+      this.tracerWorld.addComponent(entity, 'renderable', { mesh });
+      this.tracerWorld.addComponent(entity, 'trace', {
+        active: false,
+        vel: new THREE.Vector3(),
+        life: 0
+      });
+      this.tracerPoolIds.push(entity);
     }
   }
 
@@ -200,16 +209,21 @@ export class WeaponSystem {
     this.muzzleFlash.intensity = THREE.MathUtils.damp(this.muzzleFlash.intensity, 0, 22, dt);
     this.viewMuzzleLight.intensity = THREE.MathUtils.damp(this.viewMuzzleLight.intensity, 0.35, 12, dt);
 
-    for (let i = this.activeTracers.length - 1; i >= 0; i -= 1) {
-      const p = this.activeTracers[i];
-      p.life -= dt;
-      p.mesh.position.addScaledVector(p.vel, dt);
-      p.mesh.material.opacity = Math.max(0, p.life * 4);
-      if (p.life <= 0) {
-        p.mesh.visible = false;
-        p.mesh.material.opacity = 0;
-        this.activeTracers.splice(i, 1);
-        this.tracerPool.push(p);
+    for (let i = this.activeTracerIds.length - 1; i >= 0; i -= 1) {
+      const entity = this.activeTracerIds[i];
+      const trace = this.tracerWorld.getComponent(entity, 'trace');
+      const renderable = this.tracerWorld.getComponent(entity, 'renderable');
+
+      trace.life -= dt;
+      renderable.mesh.position.addScaledVector(trace.vel, dt);
+      renderable.mesh.material.opacity = Math.max(0, trace.life * 4);
+
+      if (trace.life <= 0) {
+        trace.active = false;
+        renderable.mesh.visible = false;
+        renderable.mesh.material.opacity = 0;
+        this.activeTracerIds.splice(i, 1);
+        this.tracerPoolIds.push(entity);
       }
     }
 
@@ -277,15 +291,19 @@ export class WeaponSystem {
   }
 
   spawnTracer(origin, direction) {
-    const tracer = this.tracerPool.pop() || this.activeTracers.shift();
-    if (!tracer) return;
+    const entity = this.tracerPoolIds.pop() || this.activeTracerIds.shift();
+    if (!entity) return;
 
-    tracer.mesh.visible = true;
-    tracer.mesh.material.opacity = 1;
-    tracer.mesh.position.copy(origin).addScaledVector(direction, 0.8);
-    tracer.vel.copy(direction).multiplyScalar(70);
-    tracer.life = 0.08;
-    this.activeTracers.push(tracer);
+    const trace = this.tracerWorld.getComponent(entity, 'trace');
+    const renderable = this.tracerWorld.getComponent(entity, 'renderable');
+
+    trace.active = true;
+    trace.life = 0.08;
+    trace.vel.copy(direction).multiplyScalar(70);
+    renderable.mesh.visible = true;
+    renderable.mesh.material.opacity = 1;
+    renderable.mesh.position.copy(origin).addScaledVector(direction, 0.8);
+    this.activeTracerIds.push(entity);
   }
 
   addAmmo(amount) {

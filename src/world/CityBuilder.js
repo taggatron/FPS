@@ -520,14 +520,29 @@ export class CityBuilder {
     }
   }
 
-  update(dt) {
-    for (const p of this.pickups) {
-      if (!p.active) continue;
-      p.phase += dt * 2.2;
-      p.mesh.position.y += Math.sin(p.phase) * 0.005;
-      p.mesh.rotation.y += dt;
-    }
+  registerPickupsToECS(world) {
+    for (const pickup of this.pickups) {
+      const entity = world.createEntity();
+      pickup.entity = entity;
 
+      world.addComponent(entity, 'pickup', {
+        type: pickup.type,
+        amount: pickup.amount
+      });
+      world.addComponent(entity, 'transform', {
+        baseY: pickup.mesh.position.y,
+        phase: pickup.phase
+      });
+      world.addComponent(entity, 'renderable', {
+        mesh: pickup.mesh
+      });
+      world.addComponent(entity, 'lifecycle', {
+        active: pickup.active
+      });
+    }
+  }
+
+  update(dt) {
     let sway = performance.now() * 0.00015;
     for (const mesh of this.staticMeshes) {
       if (mesh.userData.isDistantGiant) {
