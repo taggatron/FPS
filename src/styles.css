@@ -96,6 +96,27 @@ h1 {
   text-transform: uppercase;
 }
 
+.graphics-row {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #b8def0;
+}
+
+.graphics-row select {
+  pointer-events: auto;
+  background: rgba(11, 20, 30, 0.85);
+  color: #d9f3ff;
+  border: 1px solid rgba(122, 211, 255, 0.38);
+  padding: 0.28rem 0.42rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 button {
   pointer-events: auto;
   margin-top: 1rem;

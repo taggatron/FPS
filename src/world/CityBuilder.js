@@ -7,6 +7,7 @@ function noise(x, z) {
 export class CityBuilder {
   constructor(scene) {
     this.scene = scene;
+    this.generatedObjects = [];
     this.pickups = [];
     this.staticMeshes = [];
     this.terrain = null;
@@ -14,6 +15,8 @@ export class CityBuilder {
     this.smokeColumns = [];
     this.dustParticles = null;
     this.dustData = [];
+    this.profile = null;
+    this.configureQuality('balanced');
 
     this.materials = {
       rubble: new THREE.MeshStandardMaterial({ color: 0x3f4348, roughness: 0.95 }),
@@ -24,7 +27,73 @@ export class CityBuilder {
     };
   }
 
+  configureQuality(preset = 'balanced') {
+    this.profile =
+      preset === 'high'
+        ? {
+            skylineCount: 220,
+            propCount: 420,
+            streetLightCount: 120,
+            smokeCount: 52,
+            dustCount: 980,
+            pickupCount: 26,
+            fireChance: 0.11
+          }
+        : preset === 'performance'
+          ? {
+              skylineCount: 120,
+              propCount: 170,
+              streetLightCount: 48,
+              smokeCount: 18,
+              dustCount: 280,
+              pickupCount: 18,
+              fireChance: 0.045
+            }
+          : {
+              skylineCount: 180,
+              propCount: 280,
+              streetLightCount: 85,
+              smokeCount: 36,
+              dustCount: 680,
+              pickupCount: 24,
+              fireChance: 0.08
+            };
+  }
+
+  trackAdd(obj) {
+    this.scene.add(obj);
+    this.generatedObjects.push(obj);
+  }
+
+  clearGenerated() {
+    const sharedMaterials = new Set(Object.values(this.materials));
+    for (const obj of this.generatedObjects) {
+      this.scene.remove(obj);
+      if (obj.traverse) {
+        obj.traverse((node) => {
+          if (node.geometry) node.geometry.dispose?.();
+          if (Array.isArray(node.material)) {
+            for (const material of node.material) {
+              if (!sharedMaterials.has(material)) material.dispose?.();
+            }
+          } else {
+            if (node.material && !sharedMaterials.has(node.material)) node.material.dispose?.();
+          }
+        });
+      }
+    }
+    this.generatedObjects.length = 0;
+    this.pickups.length = 0;
+    this.staticMeshes.length = 0;
+    this.fires.length = 0;
+    this.smokeColumns.length = 0;
+    this.dustData.length = 0;
+    this.terrain = null;
+    this.dustParticles = null;
+  }
+
   build() {
+    this.clearGenerated();
     this.addSkyDome();
     this.addGround();
     this.addRoadGrid();
@@ -70,7 +139,7 @@ export class CityBuilder {
     });
 
     const sky = new THREE.Mesh(skyGeo, skyMat);
-    this.scene.add(sky);
+    this.trackAdd(sky);
   }
 
   getTerrainHeight(x, z) {
@@ -98,7 +167,7 @@ export class CityBuilder {
     this.terrain = new THREE.Mesh(geo, mat);
     this.terrain.rotation.x = -Math.PI / 2;
     this.terrain.receiveShadow = true;
-    this.scene.add(this.terrain);
+    this.trackAdd(this.terrain);
   }
 
   addRoadGrid() {
@@ -108,27 +177,27 @@ export class CityBuilder {
       const road = new THREE.Mesh(new THREE.BoxGeometry(700, 0.2, 16), roadMat);
       road.position.set(0, this.getTerrainHeight(0, i * 80) + 0.05, i * 80);
       road.receiveShadow = true;
-      this.scene.add(road);
+      this.trackAdd(road);
       this.staticMeshes.push(road);
 
       const road2 = new THREE.Mesh(new THREE.BoxGeometry(16, 0.2, 700), roadMat);
       road2.position.set(i * 80, this.getTerrainHeight(i * 80, 0) + 0.05, 0);
       road2.receiveShadow = true;
-      this.scene.add(road2);
+      this.trackAdd(road2);
       this.staticMeshes.push(road2);
     }
 
     const brokenHighway = new THREE.Mesh(new THREE.BoxGeometry(240, 8, 24), this.materials.concrete);
     brokenHighway.position.set(120, 18, -120);
     brokenHighway.rotation.z = -0.12;
-    this.scene.add(brokenHighway);
+    this.trackAdd(brokenHighway);
     this.staticMeshes.push(brokenHighway);
 
     const collapsed = new THREE.Mesh(new THREE.BoxGeometry(140, 7, 24), this.materials.concrete);
     collapsed.position.set(210, 4, -90);
     collapsed.rotation.y = 0.45;
     collapsed.rotation.x = 0.2;
-    this.scene.add(collapsed);
+    this.trackAdd(collapsed);
     this.staticMeshes.push(collapsed);
   }
 
@@ -140,7 +209,7 @@ export class CityBuilder {
       opacity: 0.12
     });
 
-    for (let i = 0; i < 180; i += 1) {
+    for (let i = 0; i < this.profile.skylineCount; i += 1) {
       const w = 10 + Math.random() * 26;
       const d = 10 + Math.random() * 26;
       const h = 18 + Math.random() * 110;
@@ -193,11 +262,43 @@ export class CityBuilder {
       this.staticMeshes.push(mesh);
     }
 
-    this.scene.add(block);
+    this.trackAdd(block);
   }
 
   addProps() {
-    for (let i = 0; i < 280; i += 1) {
+    const rubbleCount = Math.floor(this.profile.propCount * 0.45);
+    const metalCount = Math.floor(this.profile.propCount * 0.25);
+    const plantCount = this.profile.propCount - rubbleCount - metalCount;
+
+    const rubbleMesh = new THREE.InstancedMesh(
+      new THREE.DodecahedronGeometry(1.2, 0),
+      this.materials.rubble,
+      rubbleCount
+    );
+    const metalMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1.2, 0.8, 2.8),
+      this.materials.metal,
+      metalCount
+    );
+    const plantMesh = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(1, 2.4, 6),
+      this.materials.plant,
+      plantCount
+    );
+
+    rubbleMesh.castShadow = true;
+    rubbleMesh.receiveShadow = true;
+    metalMesh.castShadow = true;
+    metalMesh.receiveShadow = true;
+    plantMesh.castShadow = true;
+    plantMesh.receiveShadow = true;
+
+    const dummy = new THREE.Object3D();
+    let r = 0;
+    let m = 0;
+    let p = 0;
+
+    for (let i = 0; i < this.profile.propCount; i += 1) {
       const type = Math.random();
       const x = (Math.random() - 0.5) * 760;
       const z = (Math.random() - 0.5) * 760;
@@ -205,36 +306,52 @@ export class CityBuilder {
 
       if (Math.abs(x) < 50 && Math.abs(z) < 50) continue;
 
-      let mesh;
-      if (type < 0.45) {
-        mesh = new THREE.Mesh(
-          new THREE.DodecahedronGeometry(0.6 + Math.random() * 2.5, 0),
-          this.materials.rubble
-        );
-      } else if (type < 0.7) {
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 2.8), this.materials.metal);
-      } else {
-        mesh = new THREE.Mesh(new THREE.ConeGeometry(0.5 + Math.random(), 1 + Math.random() * 3, 6), this.materials.plant);
+      dummy.position.set(x, y + 0.4, z);
+      dummy.rotation.set(0, Math.random() * Math.PI, 0);
+
+      if (type < 0.45 && r < rubbleCount) {
+        const scale = 0.5 + Math.random() * 2.2;
+        dummy.scale.set(scale, scale, scale);
+        dummy.updateMatrix();
+        rubbleMesh.setMatrixAt(r, dummy.matrix);
+        r += 1;
+      } else if (type < 0.7 && m < metalCount) {
+        const sx = 0.9 + Math.random() * 0.5;
+        const sz = 0.9 + Math.random() * 1.4;
+        dummy.scale.set(sx, 0.75 + Math.random() * 0.45, sz);
+        dummy.updateMatrix();
+        metalMesh.setMatrixAt(m, dummy.matrix);
+        m += 1;
+      } else if (p < plantCount) {
+        const scale = 0.5 + Math.random() * 1.4;
+        dummy.scale.set(scale, scale, scale);
+        dummy.updateMatrix();
+        plantMesh.setMatrixAt(p, dummy.matrix);
+        p += 1;
       }
 
-      mesh.position.set(x, y + 0.4, z);
-      mesh.rotation.y = Math.random() * Math.PI;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.scene.add(mesh);
-      this.staticMeshes.push(mesh);
-
-      if (Math.random() < 0.08) {
+      if (Math.random() < this.profile.fireChance) {
         this.addFireCluster(x + Math.random() * 4, z + Math.random() * 4);
       }
     }
+
+    rubbleMesh.count = r;
+    metalMesh.count = m;
+    plantMesh.count = p;
+    rubbleMesh.instanceMatrix.needsUpdate = true;
+    metalMesh.instanceMatrix.needsUpdate = true;
+    plantMesh.instanceMatrix.needsUpdate = true;
+
+    this.trackAdd(rubbleMesh);
+    this.trackAdd(metalMesh);
+    this.trackAdd(plantMesh);
   }
 
   addStreetLights() {
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x454f57, roughness: 0.65, metalness: 0.72 });
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x94d7ff, emissive: 0x2a7fb0, emissiveIntensity: 0.8 });
 
-    for (let i = 0; i < 85; i += 1) {
+    for (let i = 0; i < this.profile.streetLightCount; i += 1) {
       const alongX = Math.random() > 0.5;
       const lane = (Math.floor(Math.random() * 9) - 4) * 80;
       const offset = (Math.random() - 0.5) * 700;
@@ -245,18 +362,18 @@ export class CityBuilder {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 8.5, 10), poleMat);
       pole.position.set(x, y + 4.2, z);
       pole.castShadow = true;
-      this.scene.add(pole);
+      this.trackAdd(pole);
       this.staticMeshes.push(pole);
 
       const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.22, 0.35), lampMat);
       lamp.position.set(x, y + 8.2, z);
-      this.scene.add(lamp);
+      this.trackAdd(lamp);
       this.staticMeshes.push(lamp);
 
       if (Math.random() < 0.72) {
         const light = new THREE.PointLight(0x79c9ff, 0.75, 20, 2);
         light.position.set(x, y + 8, z);
-        this.scene.add(light);
+        this.trackAdd(light);
         this.fires.push({ light, base: 0.55 + Math.random() * 0.4, phase: Math.random() * Math.PI * 2 });
       }
     }
@@ -267,7 +384,7 @@ export class CityBuilder {
 
     const fire = new THREE.PointLight(0xff6a33, 3.2, 24, 2);
     fire.position.set(x, y + 2, z);
-    this.scene.add(fire);
+    this.trackAdd(fire);
     this.fires.push({ light: fire, base: 2.4 + Math.random() * 1.4, phase: Math.random() * Math.PI * 2 });
 
     const ember = new THREE.Mesh(
@@ -275,13 +392,13 @@ export class CityBuilder {
       new THREE.MeshBasicMaterial({ color: 0xff7341 })
     );
     ember.position.set(x, y + 0.3, z);
-    this.scene.add(ember);
+    this.trackAdd(ember);
 
     this.staticMeshes.push(ember);
   }
 
   addAtmosphericVolumes() {
-    for (let i = 0; i < 36; i += 1) {
+    for (let i = 0; i < this.profile.smokeCount; i += 1) {
       const x = (Math.random() - 0.5) * 720;
       const z = (Math.random() - 0.5) * 720;
       const y = this.getTerrainHeight(x, z);
@@ -291,13 +408,13 @@ export class CityBuilder {
       );
       cloud.position.set(x, y + 8 + Math.random() * 16, z);
       cloud.rotation.y = Math.random() * Math.PI * 2;
-      this.scene.add(cloud);
+      this.trackAdd(cloud);
       this.smokeColumns.push({ mesh: cloud, drift: 0.08 + Math.random() * 0.12, phase: Math.random() * Math.PI * 2 });
     }
   }
 
   addDustParticles() {
-    const count = 680;
+    const count = this.profile.dustCount;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
 
@@ -327,7 +444,7 @@ export class CityBuilder {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     const mat = new THREE.PointsMaterial({ size: 0.36, vertexColors: true, transparent: true, opacity: 0.28, depthWrite: false });
     this.dustParticles = new THREE.Points(geo, mat);
-    this.scene.add(this.dustParticles);
+    this.trackAdd(this.dustParticles);
   }
 
   addDistantGiants() {
@@ -342,7 +459,7 @@ export class CityBuilder {
       body.position.set(x, y + 15, z);
       body.castShadow = true;
       body.userData.isDistantGiant = true;
-      this.scene.add(body);
+      this.trackAdd(body);
 
       const neck = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 12, 10), giantMat);
       neck.position.set(0, 9, 3);
@@ -354,7 +471,7 @@ export class CityBuilder {
   }
 
   addPickups() {
-    for (let i = 0; i < 24; i += 1) {
+    for (let i = 0; i < this.profile.pickupCount; i += 1) {
       const isHealth = Math.random() > 0.5;
       const color = isHealth ? 0x63f28f : 0x79b1ff;
       const x = (Math.random() - 0.5) * 540;
@@ -368,7 +485,7 @@ export class CityBuilder {
       mesh.position.set(x, y, z);
       mesh.castShadow = true;
 
-      this.scene.add(mesh);
+      this.trackAdd(mesh);
 
       this.pickups.push({
         mesh,

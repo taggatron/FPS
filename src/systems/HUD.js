@@ -31,6 +31,14 @@ export class HUD {
           </div>
         </div>
         <div class="asset-status" id="assetStatus">Initializing drop systems...</div>
+        <div class="graphics-row">
+          <label for="graphicsPreset">Graphics Preset</label>
+          <select id="graphicsPreset">
+            <option value="high">High</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="performance">Performance</option>
+          </select>
+        </div>
         <button id="startButton">Deploy</button>
       </div>
     `;
@@ -122,6 +130,7 @@ export class HUD {
 
     this.startButton = this.menu.querySelector('#startButton');
     this.assetStatus = this.menu.querySelector('#assetStatus');
+    this.graphicsPreset = this.menu.querySelector('#graphicsPreset');
   }
 
   makePanel(title, subtitle) {
@@ -175,6 +184,16 @@ export class HUD {
 
   setAssetStatus(text) {
     this.assetStatus.textContent = text;
+  }
+
+  getGraphicsPreset() {
+    return this.graphicsPreset.value;
+  }
+
+  onGraphicsPresetChange(cb) {
+    this.graphicsPreset.addEventListener('change', () => {
+      cb(this.graphicsPreset.value);
+    });
   }
 
   update(stats) {

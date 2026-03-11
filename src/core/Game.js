@@ -34,17 +34,27 @@ export class Game {
     this.mountNode.appendChild(this.renderer.domElement);
 
     this.clock = new THREE.Clock();
+    this.frameTimeEma = 1 / 60;
+    this.qualityCheckTimer = 0;
+    this.currentPixelRatio = Math.min(window.devicePixelRatio, 1.5);
+    this.dynamicQualityEnabled = true;
+    this.pixelRatioMin = 0.75;
+    this.pixelRatioMax = 1.5;
+    this.activeGraphicsPreset = 'balanced';
     this.input = new Input();
     this.player = new FPSController(this.camera, this.input);
 
     this.city = new CityBuilder(this.scene);
-    this.city.build();
 
     this.weapon = new WeaponSystem(this.camera, this.scene);
     this.dinosaurs = new DinosaurManager(this.scene, (x, z) => this.city.getTerrainHeight(x, z));
     this.state = new GameState();
     this.hud = new HUD(this.mountNode);
     this.sound = new Soundscape();
+
+    this.hud.onGraphicsPresetChange((preset) => {
+      this.applyGraphicsPreset(preset, true);
+    });
 
     this.hud.setStartEnabled(false);
     this.hud.setAssetStatus('Streaming apex signatures 0%');
@@ -79,6 +89,7 @@ export class Game {
 
     this.beacon = this.createBeacon();
     this.scene.add(this.beacon);
+    this.applyGraphicsPreset(this.hud.getGraphicsPreset(), false);
 
     this.roarTimer = 0;
     this.invincibleMode = true;
@@ -88,6 +99,77 @@ export class Game {
     this.bindEvents();
 
     this.resetWorld();
+  }
+
+  applyGraphicsPreset(preset, rebuildCity) {
+    this.activeGraphicsPreset = preset;
+
+    if (preset === 'high') {
+      this.dynamicQualityEnabled = false;
+      this.pixelRatioMin = Math.min(window.devicePixelRatio, 1.2);
+      this.pixelRatioMax = Math.min(window.devicePixelRatio, 2);
+      this.currentPixelRatio = this.pixelRatioMax;
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      this.renderer.toneMappingExposure = 1.2;
+    } else if (preset === 'performance') {
+      this.dynamicQualityEnabled = true;
+      this.pixelRatioMin = 0.62;
+      this.pixelRatioMax = Math.min(window.devicePixelRatio, 1.05);
+      this.currentPixelRatio = Math.min(this.currentPixelRatio, this.pixelRatioMax);
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFShadowMap;
+      this.renderer.toneMappingExposure = 1.05;
+    } else {
+      this.dynamicQualityEnabled = true;
+      this.pixelRatioMin = 0.78;
+      this.pixelRatioMax = Math.min(window.devicePixelRatio, 1.5);
+      this.currentPixelRatio = Math.min(this.currentPixelRatio, this.pixelRatioMax);
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      this.renderer.toneMappingExposure = 1.15;
+    }
+
+    this.renderer.setPixelRatio(this.currentPixelRatio);
+
+    this.city.configureQuality(preset);
+    if (rebuildCity || !this.city.terrain) {
+      this.city.build();
+      this.extractionPoint.set(184, this.city.getTerrainHeight(184, -172) + 0.4, -172);
+      this.beacon.position.copy(this.extractionPoint);
+      if (this.state?.phase !== GamePhase.PLAYING && this.state?.phase !== GamePhase.INTRO) {
+        this.resetWorld();
+      }
+      this.hud.setAssetStatus(
+        preset === 'high'
+          ? 'Visual profile: High fidelity'
+          : preset === 'performance'
+            ? 'Visual profile: Performance optimized'
+            : 'Visual profile: Balanced combat mode'
+      );
+    }
+  }
+
+  updateDynamicQuality(dt) {
+    this.frameTimeEma = THREE.MathUtils.lerp(this.frameTimeEma, dt, 0.08);
+    if (!this.dynamicQualityEnabled) return;
+
+    this.qualityCheckTimer += dt;
+    if (this.qualityCheckTimer < 0.45) return;
+    this.qualityCheckTimer = 0;
+
+    let nextRatio = this.currentPixelRatio;
+    if (this.frameTimeEma > 1 / 50) {
+      nextRatio *= 0.92;
+    } else if (this.frameTimeEma < 1 / 64) {
+      nextRatio *= 1.05;
+    }
+
+    nextRatio = THREE.MathUtils.clamp(nextRatio, this.pixelRatioMin, this.pixelRatioMax);
+    if (Math.abs(nextRatio - this.currentPixelRatio) > 0.02) {
+      this.currentPixelRatio = nextRatio;
+      this.renderer.setPixelRatio(this.currentPixelRatio);
+    }
   }
 
   setupLights() {
@@ -345,6 +427,7 @@ export class Game {
   }
 
   update(dt) {
+    this.updateDynamicQuality(dt);
     this.city.update(dt);
     const isAiming = this.state.phase === GamePhase.PLAYING && this.input.isMouseDown(2);
     this.weapon.update(dt, this.player.velocity, isAiming);
