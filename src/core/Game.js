@@ -8,6 +8,10 @@ import { IntroSequence } from '../systems/IntroSequence.js';
 import { HUD } from '../systems/HUD.js';
 import { GameState, GamePhase } from '../systems/GameState.js';
 import { Soundscape } from './Soundscape.js';
+import { FixedStepLoop } from '../engine/physics/FixedStepLoop.js';
+import { DebugOverlay } from '../engine/diagnostics/DebugOverlay.js';
+import { WorkerBridge } from '../engine/workers/WorkerBridge.js';
+import { AssetManager } from '../engine/assets/AssetManager.js';
 
 export class Game {
   constructor(mountNode) {
@@ -32,8 +36,10 @@ export class Game {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.mountNode.appendChild(this.renderer.domElement);
+    this.assetManager = new AssetManager(this.renderer);
 
     this.clock = new THREE.Clock();
+    this.fixedLoop = new FixedStepLoop({ step: 1 / 60, maxSubSteps: 5 });
     this.frameTimeEma = 1 / 60;
     this.qualityCheckTimer = 0;
     this.currentPixelRatio = Math.min(window.devicePixelRatio, 1.5);
@@ -47,10 +53,13 @@ export class Game {
     this.city = new CityBuilder(this.scene);
 
     this.weapon = new WeaponSystem(this.camera, this.scene);
-    this.dinosaurs = new DinosaurManager(this.scene, (x, z) => this.city.getTerrainHeight(x, z));
+    this.dinosaurs = new DinosaurManager(this.scene, (x, z) => this.city.getTerrainHeight(x, z), this.assetManager);
     this.state = new GameState();
     this.hud = new HUD(this.mountNode);
     this.sound = new Soundscape();
+    this.debugOverlay = new DebugOverlay(this.mountNode);
+    this.workerBridge = new WorkerBridge();
+    this.workerTick = 0;
 
     this.hud.onGraphicsPresetChange((preset) => {
       this.applyGraphicsPreset(preset, true);
@@ -93,6 +102,7 @@ export class Game {
 
     this.roarTimer = 0;
     this.invincibleMode = true;
+    this.tmpKnockDir = new THREE.Vector3();
 
     this.setupLights();
     this.bindUI();
@@ -326,13 +336,16 @@ export class Game {
 
   processShooting() {
     if (this.input.isMouseDown(0)) {
-      const fired = this.weapon.tryFire(this.dinosaurs.getHitTargets(), (hit, damage) => {
+      const fired = this.weapon.tryFire(
+        this.dinosaurs.getHitTargets(this.camera.position, this.weapon.range),
+        (hit, damage) => {
         const result = this.dinosaurs.applyHit(hit, damage);
         if (result?.killed) {
           this.state.addKill(result.score, result.type);
           this.sound.roar(result.type === 'apex' ? 'large' : result.type === 'mauler' ? 'medium' : 'small');
         }
-      });
+        }
+      );
 
       if (fired) this.sound.shot();
     }
@@ -378,7 +391,7 @@ export class Game {
       return;
     }
 
-    const toEnemy = enemyPos.clone().sub(this.player.position).normalize();
+    const toEnemy = this.tmpKnockDir.copy(enemyPos).sub(this.player.position).normalize();
     const knock = Math.max(0.5, amount * 0.02);
     this.player.velocity.addScaledVector(toEnemy, -knock);
 
@@ -457,12 +470,30 @@ export class Game {
     }
 
     this.updateHud();
+
+    this.workerTick += dt;
+    if (this.workerTick > 0.2) {
+      this.workerTick = 0;
+      this.workerBridge.requestAiSnapshot({
+        player: { x: this.player.position.x, z: this.player.position.z },
+        enemies: this.dinosaurs.getEnemySnapshot()
+      });
+    }
   }
+
+  fixedUpdate = (stepDt) => {
+    this.update(stepDt);
+  };
+
+  render = () => {
+    this.renderer.render(this.scene, this.camera);
+  };
 
   loop = () => {
     const dt = Math.min(this.clock.getDelta(), 0.033);
-    this.update(dt);
-    this.renderer.render(this.scene, this.camera);
+    this.fixedLoop.tick(dt, this.fixedUpdate);
+    this.render();
+    this.debugOverlay.update(dt, this.renderer);
     requestAnimationFrame(this.loop);
   };
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 function noise(x, z) {
   return Math.sin(x * 0.09) * 1.6 + Math.cos(z * 0.07) * 1.2 + Math.sin((x + z) * 0.04) * 2.3;
@@ -172,33 +173,44 @@ export class CityBuilder {
 
   addRoadGrid() {
     const roadMat = new THREE.MeshStandardMaterial({ color: 0x26292e, roughness: 0.98 });
+    const parts = [];
 
     for (let i = -4; i <= 4; i += 1) {
-      const road = new THREE.Mesh(new THREE.BoxGeometry(700, 0.2, 16), roadMat);
-      road.position.set(0, this.getTerrainHeight(0, i * 80) + 0.05, i * 80);
-      road.receiveShadow = true;
-      this.trackAdd(road);
-      this.staticMeshes.push(road);
+      const g1 = new THREE.BoxGeometry(700, 0.2, 16);
+      g1.translate(0, this.getTerrainHeight(0, i * 80) + 0.05, i * 80);
+      parts.push(g1);
 
-      const road2 = new THREE.Mesh(new THREE.BoxGeometry(16, 0.2, 700), roadMat);
-      road2.position.set(i * 80, this.getTerrainHeight(i * 80, 0) + 0.05, 0);
-      road2.receiveShadow = true;
-      this.trackAdd(road2);
-      this.staticMeshes.push(road2);
+      const g2 = new THREE.BoxGeometry(16, 0.2, 700);
+      g2.translate(i * 80, this.getTerrainHeight(i * 80, 0) + 0.05, 0);
+      parts.push(g2);
     }
 
-    const brokenHighway = new THREE.Mesh(new THREE.BoxGeometry(240, 8, 24), this.materials.concrete);
-    brokenHighway.position.set(120, 18, -120);
-    brokenHighway.rotation.z = -0.12;
-    this.trackAdd(brokenHighway);
-    this.staticMeshes.push(brokenHighway);
+    const mergedRoads = BufferGeometryUtils.mergeGeometries(parts);
+    const roadsMesh = new THREE.Mesh(mergedRoads, roadMat);
+    roadsMesh.receiveShadow = true;
+    roadsMesh.frustumCulled = true;
+    this.trackAdd(roadsMesh);
+    this.staticMeshes.push(roadsMesh);
 
-    const collapsed = new THREE.Mesh(new THREE.BoxGeometry(140, 7, 24), this.materials.concrete);
-    collapsed.position.set(210, 4, -90);
-    collapsed.rotation.y = 0.45;
-    collapsed.rotation.x = 0.2;
-    this.trackAdd(collapsed);
-    this.staticMeshes.push(collapsed);
+    const highwayParts = [];
+    const brokenG = new THREE.BoxGeometry(240, 8, 24);
+    brokenG.rotateZ(-0.12);
+    brokenG.translate(120, 18, -120);
+    highwayParts.push(brokenG);
+
+    const collapsedG = new THREE.BoxGeometry(140, 7, 24);
+    collapsedG.rotateY(0.45);
+    collapsedG.rotateX(0.2);
+    collapsedG.translate(210, 4, -90);
+    highwayParts.push(collapsedG);
+
+    const mergedHighway = BufferGeometryUtils.mergeGeometries(highwayParts);
+    const highwayMesh = new THREE.Mesh(mergedHighway, this.materials.concrete.clone());
+    highwayMesh.castShadow = true;
+    highwayMesh.receiveShadow = true;
+    highwayMesh.frustumCulled = true;
+    this.trackAdd(highwayMesh);
+    this.staticMeshes.push(highwayMesh);
   }
 
   addSkylineRuins() {
@@ -288,10 +300,13 @@ export class CityBuilder {
 
     rubbleMesh.castShadow = true;
     rubbleMesh.receiveShadow = true;
+    rubbleMesh.frustumCulled = true;
     metalMesh.castShadow = true;
     metalMesh.receiveShadow = true;
+    metalMesh.frustumCulled = true;
     plantMesh.castShadow = true;
     plantMesh.receiveShadow = true;
+    plantMesh.frustumCulled = true;
 
     const dummy = new THREE.Object3D();
     let r = 0;
@@ -456,17 +471,25 @@ export class CityBuilder {
       const y = this.getTerrainHeight(x, z);
 
       const body = new THREE.Mesh(new THREE.CapsuleGeometry(4.2, 11, 6, 12), giantMat);
-      body.position.set(x, y + 15, z);
+      body.position.set(0, 0, 0);
       body.castShadow = true;
       body.userData.isDistantGiant = true;
-      this.trackAdd(body);
 
       const neck = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 12, 10), giantMat);
       neck.position.set(0, 9, 3);
       neck.rotation.x = -0.2;
       body.add(neck);
 
-      this.staticMeshes.push(body);
+      const low = new THREE.Mesh(new THREE.CapsuleGeometry(3.2, 7.5, 4, 8), giantMat);
+      low.position.set(0, 0, 0);
+
+      const lod = new THREE.LOD();
+      lod.addLevel(body, 0);
+      lod.addLevel(low, 180);
+      lod.position.set(x, y + 15, z);
+      lod.userData.isDistantGiant = true;
+      this.trackAdd(lod);
+      this.staticMeshes.push(lod);
     }
   }
 

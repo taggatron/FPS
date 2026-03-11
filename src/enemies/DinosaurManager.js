@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { SpatialHashGrid } from '../engine/spatial/SpatialHashGrid.js';
 
 const TYPES = {
   raptor: {
@@ -36,9 +36,10 @@ const TYPES = {
 };
 
 export class DinosaurManager {
-  constructor(scene, terrainHeightFn) {
+  constructor(scene, terrainHeightFn, assetManager) {
     this.scene = scene;
     this.terrainHeightFn = terrainHeightFn;
+    this.assetManager = assetManager;
     this.enemies = [];
     this.spawnTimer = 0;
     this.maxEnemies = 28;
@@ -52,8 +53,9 @@ export class DinosaurManager {
     this.tmpDesired = new THREE.Vector3();
     this.tmpImpact = new THREE.Vector3();
     this.hitTargets = [];
+    this.spatialQuery = [];
+    this.spatial = new SpatialHashGrid(36);
 
-    this.modelLoader = new GLTFLoader();
     this.apexModelTemplate = null;
     this.apexAnimations = [];
 
@@ -63,14 +65,15 @@ export class DinosaurManager {
   preloadApexModel() {
     const modelUrl = '/t-rex/scene.gltf';
     this.emitLoadingStatus('loading', 0);
-    this.modelLoader.load(
-      modelUrl,
-      (gltf) => {
+    this.assetManager
+      .loadModel(modelUrl)
+      .then((gltf) => {
         const root = gltf.scene;
         root.traverse((obj) => {
           if (obj.isMesh) {
             obj.castShadow = true;
             obj.receiveShadow = true;
+            obj.frustumCulled = true;
             if (obj.material?.map) obj.material.map.colorSpace = THREE.SRGBColorSpace;
           }
         });
@@ -94,19 +97,12 @@ export class DinosaurManager {
         this.apexAnimations = gltf.animations ?? [];
         this.apexModelReady = true;
         this.emitLoadingStatus('ready', 100);
-      },
-      (ev) => {
-        if (!ev || !ev.total) return;
-        const progress = Math.min(100, (ev.loaded / ev.total) * 100);
-        this.loadingProgress = progress;
-        this.emitLoadingStatus('loading', progress);
-      },
-      (err) => {
+      })
+      .catch((err) => {
         this.apexModelReady = true;
         this.emitLoadingStatus('fallback', 100);
         console.warn('Failed to load T-Rex model, using placeholder apex mesh.', err);
-      }
-    );
+      });
   }
 
   onLoadingStatus(callback) {
@@ -136,9 +132,18 @@ export class DinosaurManager {
 
   makeDinoMesh(typeName) {
     if (typeName === 'apex' && this.apexModelTemplate) {
-      const modelGroup = new THREE.Group();
+      const lod = new THREE.LOD();
       const instance = clone(this.apexModelTemplate);
-      modelGroup.add(instance);
+      const lowProxy = new THREE.Mesh(
+        new THREE.CapsuleGeometry(1.4, 3.2, 4, 8),
+        new THREE.MeshStandardMaterial({ color: 0x4e5a63, roughness: 0.84 })
+      );
+      lowProxy.castShadow = true;
+
+      lod.addLevel(instance, 0);
+      lod.addLevel(lowProxy, 50);
+      lod.autoUpdate = true;
+      lod.frustumCulled = true;
 
       const legs = [];
       const mixer = this.apexAnimations.length > 0 ? new THREE.AnimationMixer(instance) : null;
@@ -148,7 +153,7 @@ export class DinosaurManager {
         action.play();
       }
 
-      return { group: modelGroup, legs, mixer };
+      return { group: lod, legs, mixer };
     }
 
     const type = TYPES[typeName];
@@ -236,6 +241,8 @@ export class DinosaurManager {
   }
 
   update(dt, playerPos, onDamagePlayer) {
+    this.spatial.clear();
+
     this.spawnTimer += dt;
     if (this.spawnTimer > 7 && this.aliveCount() < this.maxEnemies) {
       this.spawnTimer = 0;
@@ -311,16 +318,36 @@ export class DinosaurManager {
         onDamagePlayer(e.type.damage, e.damagePos, e.typeName);
         e.attackCd = e.typeName === 'raptor' ? 0.9 : e.typeName === 'mauler' ? 1.2 : 1.7;
       }
+
+      this.spatial.insert(e, e.mesh.position.x, e.mesh.position.z);
     }
   }
 
-  getHitTargets() {
+  getHitTargets(origin = null, range = 120) {
     this.hitTargets.length = 0;
+
+    if (origin) {
+      this.spatial.queryRadius(origin.x, origin.z, range + 8, this.spatialQuery);
+      for (const enemy of this.spatialQuery) {
+        if (!enemy.alive) continue;
+        this.hitTargets.push(enemy.mesh);
+      }
+      return this.hitTargets;
+    }
+
     for (const enemy of this.enemies) {
-      if (!enemy.alive) continue;
-      this.hitTargets.push(enemy.mesh);
+      if (enemy.alive) this.hitTargets.push(enemy.mesh);
     }
     return this.hitTargets;
+  }
+
+  getEnemySnapshot() {
+    const out = [];
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      out.push({ x: e.mesh.position.x, z: e.mesh.position.z, type: e.typeName });
+    }
+    return out;
   }
 
   applyHit(intersection, damage) {

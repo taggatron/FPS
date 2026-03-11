@@ -12,6 +12,7 @@ A browser-based first-person shooter prototype built with Three.js. You deploy f
 - Objective loop: kill apex threats, then hold extraction beacon to win
 - Health/ammo pickups and fail/restart flow
 - Atmospheric world: ruined skyline, fog, fires, smoke-like ambience, neon remnants, rubble, overgrowth
+- Elite performance layer: fixed-step simulation, adaptive resolution scaling, instancing, geometry batching, worker offload, and diagnostics overlay
 
 ## Tech Stack
 
@@ -37,6 +38,123 @@ A browser-based first-person shooter prototype built with Three.js. You deploy f
 - src/systems/HUD.js
 - src/systems/GameState.js
 - src/assets/README.md
+
+## Engine and Game Architecture
+
+Performance-oriented architecture is now split under src:
+
+- src/engine/physics/FixedStepLoop.js
+: fixed 60 Hz simulation scheduler with frame-clamp safeguards
+- src/engine/diagnostics/DebugOverlay.js
+: lightweight runtime diagnostics (FPS, ms, draw calls, triangles, memory)
+- src/engine/spatial/SpatialHashGrid.js
+: broad-phase acceleration structure for enemy query pruning
+- src/engine/assets/AssetManager.js
+: lazy model loading, region preload/unload hooks, and KTX2 pipeline support
+- src/engine/ecs/World.js
+: minimal ECS foundation for scalable entity/system growth
+- src/engine/workers/WorkerBridge.js
+: worker message bridge for AI/path offload
+- src/workers/aiWorker.js
+: AI snapshot worker example
+- src/workers/pathWorker.js
+: pathfinding worker example
+- src/game/entities
+: game-entity module area
+- src/game/systems
+: game-system module area
+- src/game/levels
+: level and region descriptors
+
+## Implemented Performance Optimisations
+
+1. Rendering Optimisation
+
+- Repeated props are rendered via InstancedMesh in city generation.
+- Road and highway chunks are merged using BufferGeometryUtils.mergeGeometries.
+- Frustum culling is enforced on instanced and dynamic model content.
+- LOD is applied to apex dinosaur visuals and distant giant silhouettes.
+- Static node count and draw calls are reduced through batching and flattening.
+
+2. Game Loop Optimisation
+
+- Update and render are separated.
+- Fixed timestep simulation runs at 60 Hz.
+- Frame-rate dependent simulation drift is removed by stepping simulation in fixed slices.
+
+3. Memory Optimisation
+
+- Hot loops reuse vectors and temporary arrays.
+- Bullet/tracer visuals use object pooling (no per-shot geometry/material allocation).
+- City rebuild lifecycle includes controlled cleanup and disposal for generated resources.
+
+4. Parallel Processing
+
+- AI and pathfinding workers are implemented and integrated via WorkerBridge.
+- Main thread posts periodic enemy/player snapshots to worker infrastructure.
+
+5. Scene Graph Optimisation
+
+- Repeated decorative geometry is flattened with instancing.
+- Static road/highway meshes are batched.
+- Scene hierarchy is reduced where possible to lower traversal overhead.
+
+6. Spatial Acceleration Structures
+
+- Enemy broad-phase queries use SpatialHashGrid.
+- Shooting raycast candidate sets are spatially pruned instead of scanning all enemies.
+
+7. Asset Loading Improvements
+
+- Apex model uses lazy loading through AssetManager.
+- Region preload/unload APIs are available for level-streaming expansion.
+- Start menu load gating prevents entering combat before critical model readiness.
+
+8. Texture Optimisation Pipeline
+
+- KTX2Loader support is wired in AssetManager.
+- Runtime still supports standard textures as fallback while enabling compressed texture rollout.
+
+9. Code Architecture
+
+- Added engine, game, and assets directory layout for scalable growth.
+- ECS foundation is present to migrate gameplay logic incrementally.
+
+10. Performance Diagnostics
+
+- In-game debug overlay is enabled in development runtime.
+- Tracks FPS, frame time, draw calls, triangle count, and heap memory (when available).
+
+11. Web Worker Infrastructure
+
+- Implemented:
+: src/workers/aiWorker.js
+: src/workers/pathWorker.js
+
+12. Optimisation Documentation
+
+- Performance-critical classes include comments describing why each optimisation exists.
+
+## Biggest Current Bottlenecks
+
+- Large single JS bundle: main runtime remains in one large chunk, affecting startup parse/compile time.
+- Heavy model payload: apex glTF + textures are sizable and dominate first-load bandwidth.
+- Dynamic lights and shadows: many light sources and shadow maps can saturate fill and GPU time.
+- Frequent animation and AI updates: enemy updates still scale linearly with active enemy count.
+- Particle/fog effects: atmospheric visuals increase overdraw on low-end GPUs.
+
+## Additional Improvements If Scene Exceeds 10k Objects
+
+1. Move all decorative static assets to region-based streaming chunks and unload aggressively by distance.
+2. Adopt GPU frustum/occlusion culling for large instanced sets (CPU culling is no longer enough at scale).
+3. Use hierarchical spatial indices (coarse grid + subcell BVH) for collision and ray queries.
+4. Reduce per-light cost by baking lighting into probes or lightmaps for static geometry.
+5. Convert enemy update logic to worker-driven jobs with deterministic command buffers.
+6. Migrate gameplay runtime fully onto ECS with archetype iteration to reduce update overhead.
+7. Add texture atlas and strict material sharing to minimize material switches and draw state changes.
+8. Use meshlet/cluster LOD or impostors for far geometry.
+9. Introduce manual chunk splitting and dynamic imports to reduce initial payload.
+10. Add automated frame budget telemetry and quality auto-tuning policies per hardware tier.
 
 ## Run Locally
 

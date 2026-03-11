@@ -404,3 +404,18 @@ button:hover {
 .hidden {
   display: none !important;
 }
+
+.debug-overlay {
+  position: fixed;
+  left: 0.6rem;
+  top: 0.6rem;
+  z-index: 30;
+  pointer-events: none;
+  font-family: 'Courier New', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  color: #b9f1ff;
+  background: rgba(1, 12, 20, 0.72);
+  border: 1px solid rgba(126, 214, 255, 0.36);
+  padding: 0.3rem 0.42rem;
+}
