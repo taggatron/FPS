@@ -5,6 +5,24 @@ function noise(x, z) {
   return Math.sin(x * 0.09) * 1.6 + Math.cos(z * 0.07) * 1.2 + Math.sin((x + z) * 0.04) * 2.3;
 }
 
+function hashString(str) {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash * 33) ^ str.charCodeAt(i);
+  }
+  return hash >>> 0;
+}
+
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let x = Math.imul(t ^ (t >>> 15), 1 | t);
+    x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class CityBuilder {
   constructor(scene) {
     this.scene = scene;
@@ -16,6 +34,19 @@ export class CityBuilder {
     this.smokeColumns = [];
     this.dustParticles = null;
     this.dustData = [];
+    this.dustPhaseOffset = 0;
+    this.layoutCacheVersion = 4;
+    this.layoutMemo = null;
+    this.bakedLayouts = null;
+    this.lightCullTimer = 0;
+    this.performanceStats = {
+      buildMs: 0,
+      buildMode: 'procedural',
+      drawables: 0,
+      activeDynamicLights: 0,
+      totalDynamicLights: 0,
+      totalPointLights: 0
+    };
     this.profile = null;
     this.configureQuality('balanced');
 
@@ -38,7 +69,9 @@ export class CityBuilder {
             smokeCount: 52,
             dustCount: 980,
             pickupCount: 26,
-            fireChance: 0.11
+            fireChance: 0.11,
+            dynamicLightDistance: 150,
+            dynamicLightCap: 28
           }
         : preset === 'performance'
           ? {
@@ -48,7 +81,9 @@ export class CityBuilder {
               smokeCount: 18,
               dustCount: 280,
               pickupCount: 18,
-              fireChance: 0.045
+              fireChance: 0.045,
+              dynamicLightDistance: 95,
+              dynamicLightCap: 12
             }
           : {
               skylineCount: 180,
@@ -57,8 +92,106 @@ export class CityBuilder {
               smokeCount: 36,
               dustCount: 680,
               pickupCount: 24,
-              fireChance: 0.08
+              fireChance: 0.08,
+              dynamicLightDistance: 125,
+              dynamicLightCap: 20
             };
+  }
+
+  setBakedLayouts(layouts = {}) {
+    this.bakedLayouts = layouts;
+  }
+
+  getBakedLayout(key) {
+    const fromGlobal = window.__RUINFALL_BAKED_LAYOUTS__;
+    const source = this.bakedLayouts || fromGlobal;
+    return source?.[key] ?? null;
+  }
+
+  getLayoutCacheKey() {
+    return `ruinfall-city-layout-v${this.layoutCacheVersion}-${JSON.stringify(this.profile)}`;
+  }
+
+  loadCachedLayout(key) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.skyline) || !Array.isArray(parsed.streetLights)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  saveCachedLayout(key, layout) {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(layout));
+    } catch {
+      // Ignore storage quota/privacy mode failures.
+    }
+  }
+
+  generateLayoutData(key) {
+    const rng = mulberry32(hashString(key));
+    const skyline = [];
+    const streetLights = [];
+
+    const targetSkyline = this.profile.skylineCount;
+    for (let i = 0; i < targetSkyline * 2 && skyline.length < targetSkyline; i += 1) {
+      const x = (rng() - 0.5) * 760;
+      const z = (rng() - 0.5) * 760;
+      if (Math.abs(x) < 70 && Math.abs(z) < 70) continue;
+
+      skyline.push({
+        x,
+        z,
+        w: 10 + rng() * 26,
+        d: 10 + rng() * 26,
+        h: 18 + rng() * 110,
+        rotY: rng() * Math.PI * 2,
+        tiltZ: rng() < 0.28 ? (rng() - 0.5) * 0.25 : 0,
+        dark: rng() < 0.2,
+        neon: rng() < 0.15
+      });
+    }
+
+    const litBudget = Math.min(26, Math.floor(this.profile.streetLightCount * 0.35));
+    let litCount = 0;
+    for (let i = 0; i < this.profile.streetLightCount; i += 1) {
+      const alongX = rng() > 0.5;
+      const lane = (Math.floor(rng() * 9) - 4) * 80;
+      const offset = (rng() - 0.5) * 700;
+      const x = alongX ? offset : lane + (rng() > 0.5 ? 10 : -10);
+      const z = alongX ? lane + (rng() > 0.5 ? 10 : -10) : offset;
+      const hasLight = litCount < litBudget && rng() < 0.72;
+      if (hasLight) litCount += 1;
+      streetLights.push({ x, z, hasLight, phase: rng() * Math.PI * 2, base: 0.55 + rng() * 0.4 });
+    }
+
+    return { skyline, streetLights };
+  }
+
+  getOrCreateLayoutData() {
+    const key = this.getLayoutCacheKey();
+    if (this.layoutMemo?.key === key) return this.layoutMemo.data;
+
+    const baked = this.getBakedLayout(key);
+    if (baked) {
+      this.layoutMemo = { key, data: baked, mode: 'baked' };
+      return baked;
+    }
+
+    let data = this.loadCachedLayout(key);
+    let mode = 'local-cache';
+    if (!data) {
+      data = this.generateLayoutData(key);
+      this.saveCachedLayout(key, data);
+      mode = 'procedural';
+    }
+
+    this.layoutMemo = { key, data, mode };
+    return data;
   }
 
   trackAdd(obj) {
@@ -94,6 +227,7 @@ export class CityBuilder {
   }
 
   build() {
+    const buildStart = performance.now();
     this.clearGenerated();
     this.addSkyDome();
     this.addGround();
@@ -105,6 +239,26 @@ export class CityBuilder {
     this.addDustParticles();
     this.addDistantGiants();
     this.addPickups();
+
+    this.performanceStats.buildMs = performance.now() - buildStart;
+    this.performanceStats.buildMode = this.layoutMemo?.mode ?? 'procedural';
+    this.performanceStats.drawables = this.generatedObjects.length;
+    this.performanceStats.totalDynamicLights = this.fires.length;
+    this.performanceStats.activeDynamicLights = this.fires.filter((f) => f.light.visible !== false).length;
+    this.performanceStats.totalPointLights = this.countPointLights();
+  }
+
+  countPointLights() {
+    let count = 0;
+    for (const obj of this.generatedObjects) {
+      if (obj.isPointLight) count += 1;
+      if (obj.traverse) {
+        obj.traverse((node) => {
+          if (node !== obj && node.isPointLight) count += 1;
+        });
+      }
+    }
+    return count;
   }
 
   addSkyDome() {
@@ -112,9 +266,9 @@ export class CityBuilder {
     const skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       uniforms: {
-        topColor: { value: new THREE.Color(0x1d2e3e) },
-        horizonColor: { value: new THREE.Color(0x425867) },
-        bottomColor: { value: new THREE.Color(0x0a1016) }
+        topColor: { value: new THREE.Color(0x4f6f85) },
+        horizonColor: { value: new THREE.Color(0x98a67a) },
+        bottomColor: { value: new THREE.Color(0x2f3943) }
       },
       vertexShader: `
         varying vec3 vWorldPos;
@@ -214,67 +368,69 @@ export class CityBuilder {
   }
 
   addSkylineRuins() {
-    const block = new THREE.Group();
-    const windowMat = new THREE.MeshBasicMaterial({
-      color: 0x7fc4ff,
-      transparent: true,
-      opacity: 0.12
+    const layout = this.getOrCreateLayoutData();
+    const buildingMat = new THREE.MeshStandardMaterial({
+      color: 0x50565f,
+      roughness: 0.9,
+      metalness: 0.08,
+      vertexColors: true
     });
 
-    for (let i = 0; i < this.profile.skylineCount; i += 1) {
-      const w = 10 + Math.random() * 26;
-      const d = 10 + Math.random() * 26;
-      const h = 18 + Math.random() * 110;
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this.materials.concrete.clone());
+    const buildings = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      buildingMat,
+      layout.skyline.length
+    );
+    buildings.castShadow = true;
+    buildings.receiveShadow = true;
+    buildings.frustumCulled = true;
 
-      const x = (Math.random() - 0.5) * 760;
-      const z = (Math.random() - 0.5) * 760;
-      if (Math.abs(x) < 70 && Math.abs(z) < 70) continue;
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+    const neonEntries = [];
 
-      const base = this.getTerrainHeight(x, z);
-      mesh.position.set(x, base + h / 2, z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+    for (let i = 0; i < layout.skyline.length; i += 1) {
+      const b = layout.skyline[i];
+      const base = this.getTerrainHeight(b.x, b.z);
 
-      if (Math.random() < 0.28) {
-        mesh.rotation.z = (Math.random() - 0.5) * 0.25;
-      }
+      dummy.position.set(b.x, base + b.h * 0.5, b.z);
+      dummy.rotation.set(0, b.rotY, b.tiltZ);
+      dummy.scale.set(b.w, b.h, b.d);
+      dummy.updateMatrix();
+      buildings.setMatrixAt(i, dummy.matrix);
 
-      if (Math.random() < 0.2) {
-        mesh.material.color.setHex(0x3f4955);
-        mesh.material.emissive.setHex(0x0f0c16);
-      }
+      color.setHex(b.dark ? 0x3f4955 : 0x50565f);
+      buildings.setColorAt(i, color);
 
-      if (Math.random() < 0.15) {
-        const sign = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.7, h * 0.12), this.materials.neon);
-        sign.position.set(0, h * 0.2, d / 2 + 0.02);
-        mesh.add(sign);
-      }
-
-      if (Math.random() < 0.62) {
-        const floors = Math.max(2, Math.floor(h / 6));
-        const cols = Math.max(2, Math.floor(w / 3.5));
-        const panel = new THREE.Group();
-        const startY = -h * 0.42;
-
-        for (let fy = 0; fy < floors; fy += 1) {
-          for (let cx = 0; cx < cols; cx += 1) {
-            if (Math.random() < 0.38) continue;
-            const cell = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 1.05), windowMat.clone());
-            cell.material.opacity = 0.07 + Math.random() * 0.1;
-            cell.position.set((cx - cols * 0.5) * 1.1, startY + fy * 1.55, d * 0.5 + 0.03);
-            panel.add(cell);
-          }
-        }
-
-        mesh.add(panel);
-      }
-
-      block.add(mesh);
-      this.staticMeshes.push(mesh);
+      if (b.neon) neonEntries.push({ ...b, base });
     }
 
-    this.trackAdd(block);
+    buildings.instanceMatrix.needsUpdate = true;
+    if (buildings.instanceColor) buildings.instanceColor.needsUpdate = true;
+    this.trackAdd(buildings);
+
+    if (neonEntries.length > 0) {
+      const signMesh = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(1, 1),
+        this.materials.neon,
+        neonEntries.length
+      );
+      signMesh.frustumCulled = true;
+
+      for (let i = 0; i < neonEntries.length; i += 1) {
+        const b = neonEntries[i];
+        const ox = Math.sin(b.rotY) * (b.d * 0.5 + 0.04);
+        const oz = Math.cos(b.rotY) * (b.d * 0.5 + 0.04);
+        dummy.position.set(b.x + ox, b.base + b.h * 0.7, b.z + oz);
+        dummy.rotation.set(0, b.rotY, 0);
+        dummy.scale.set(b.w * 0.7, b.h * 0.12, 1);
+        dummy.updateMatrix();
+        signMesh.setMatrixAt(i, dummy.matrix);
+      }
+
+      signMesh.instanceMatrix.needsUpdate = true;
+      this.trackAdd(signMesh);
+    }
   }
 
   addProps() {
@@ -363,35 +519,46 @@ export class CityBuilder {
   }
 
   addStreetLights() {
+    const layout = this.getOrCreateLayoutData();
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x454f57, roughness: 0.65, metalness: 0.72 });
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x94d7ff, emissive: 0x2a7fb0, emissiveIntensity: 0.8 });
+    const count = layout.streetLights.length;
 
-    for (let i = 0; i < this.profile.streetLightCount; i += 1) {
-      const alongX = Math.random() > 0.5;
-      const lane = (Math.floor(Math.random() * 9) - 4) * 80;
-      const offset = (Math.random() - 0.5) * 700;
-      const x = alongX ? offset : lane + (Math.random() > 0.5 ? 10 : -10);
-      const z = alongX ? lane + (Math.random() > 0.5 ? 10 : -10) : offset;
-      const y = this.getTerrainHeight(x, z);
+    const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.2, 8.5, 8), poleMat, count);
+    const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(0.55, 0.22, 0.35), lampMat, count);
+    poles.castShadow = true;
+    poles.receiveShadow = true;
+    poles.frustumCulled = true;
+    lamps.frustumCulled = true;
 
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 8.5, 10), poleMat);
-      pole.position.set(x, y + 4.2, z);
-      pole.castShadow = true;
-      this.trackAdd(pole);
-      this.staticMeshes.push(pole);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < count; i += 1) {
+      const s = layout.streetLights[i];
+      const y = this.getTerrainHeight(s.x, s.z);
 
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.22, 0.35), lampMat);
-      lamp.position.set(x, y + 8.2, z);
-      this.trackAdd(lamp);
-      this.staticMeshes.push(lamp);
+      dummy.position.set(s.x, y + 4.2, s.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      poles.setMatrixAt(i, dummy.matrix);
 
-      if (Math.random() < 0.72) {
+      dummy.position.set(s.x, y + 8.2, s.z);
+      dummy.updateMatrix();
+      lamps.setMatrixAt(i, dummy.matrix);
+
+      if (s.hasLight) {
         const light = new THREE.PointLight(0x79c9ff, 0.75, 20, 2);
-        light.position.set(x, y + 8, z);
+        light.position.set(s.x, y + 8, s.z);
+        light.visible = false;
         this.trackAdd(light);
-        this.fires.push({ light, base: 0.55 + Math.random() * 0.4, phase: Math.random() * Math.PI * 2 });
+        this.fires.push({ light, base: s.base, phase: s.phase });
       }
     }
+
+    poles.instanceMatrix.needsUpdate = true;
+    lamps.instanceMatrix.needsUpdate = true;
+    this.trackAdd(poles);
+    this.trackAdd(lamps);
   }
 
   addFireCluster(x, z) {
@@ -399,6 +566,7 @@ export class CityBuilder {
 
     const fire = new THREE.PointLight(0xff6a33, 3.2, 24, 2);
     fire.position.set(x, y + 2, z);
+    fire.visible = false;
     this.trackAdd(fire);
     this.fires.push({ light: fire, base: 2.4 + Math.random() * 1.4, phase: Math.random() * Math.PI * 2 });
 
@@ -542,7 +710,35 @@ export class CityBuilder {
     }
   }
 
-  update(dt) {
+  updateDynamicLightActivation(viewerPosition) {
+    if (!viewerPosition || this.fires.length === 0) return;
+
+    const maxDistSq = this.profile.dynamicLightDistance * this.profile.dynamicLightDistance;
+    const candidates = [];
+
+    for (const fire of this.fires) {
+      const distSq = fire.light.position.distanceToSquared(viewerPosition);
+      if (distSq <= maxDistSq) {
+        candidates.push({ fire, distSq });
+      }
+      fire.light.visible = false;
+    }
+
+    candidates.sort((a, b) => a.distSq - b.distSq);
+    const activeCount = Math.min(this.profile.dynamicLightCap, candidates.length);
+    for (let i = 0; i < activeCount; i += 1) {
+      candidates[i].fire.light.visible = true;
+    }
+
+    this.performanceStats.activeDynamicLights = activeCount;
+    this.performanceStats.totalDynamicLights = this.fires.length;
+  }
+
+  getDiagnostics() {
+    return { ...this.performanceStats };
+  }
+
+  update(dt, viewerPosition) {
     let sway = performance.now() * 0.00015;
     for (const mesh of this.staticMeshes) {
       if (mesh.userData.isDistantGiant) {
@@ -550,7 +746,14 @@ export class CityBuilder {
       }
     }
 
+    this.lightCullTimer += dt;
+    if (this.lightCullTimer >= 0.12) {
+      this.lightCullTimer = 0;
+      this.updateDynamicLightActivation(viewerPosition);
+    }
+
     for (const f of this.fires) {
+      if (!f.light.visible) continue;
       f.phase += dt * 2.8;
       f.light.intensity = f.base + Math.sin(f.phase * 4.3) * 0.24;
     }
@@ -564,7 +767,7 @@ export class CityBuilder {
 
     if (this.dustParticles) {
       const pos = this.dustParticles.geometry.attributes.position;
-      for (let i = 0; i < this.dustData.length; i += 1) {
+      for (let i = this.dustPhaseOffset; i < this.dustData.length; i += 2) {
         const d = this.dustData[i];
         d.phase += dt * d.speed;
         const ix = i * 3;
@@ -577,6 +780,7 @@ export class CityBuilder {
           pos.array[ix + 1] = this.getTerrainHeight(pos.array[ix + 0], pos.array[ix + 2]) + 0.6;
         }
       }
+      this.dustPhaseOffset = (this.dustPhaseOffset + 1) & 1;
       pos.needsUpdate = true;
     }
   }

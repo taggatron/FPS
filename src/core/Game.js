@@ -17,12 +17,12 @@ import { SystemScheduler } from '../engine/ecs/SystemScheduler.js';
 import { PickupSystem } from '../game/systems/PickupSystem.js';
 
 export class Game {
-  constructor(mountNode) {
+  constructor(mountNode, options = {}) {
     this.mountNode = mountNode;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0f171e);
-    this.scene.fog = new THREE.FogExp2(0x27353f, 0.0038);
+    this.scene.background = new THREE.Color(0x5c6f78);
+    this.scene.fog = new THREE.FogExp2(0x5f6f72, 0.0025);
 
     this.camera = new THREE.PerspectiveCamera(78, window.innerWidth / window.innerHeight, 0.1, 1400);
     this.scene.add(this.camera);
@@ -35,7 +35,7 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.28;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.mountNode.appendChild(this.renderer.domElement);
@@ -54,6 +54,8 @@ export class Game {
     this.player = new FPSController(this.camera, this.input);
 
     this.city = new CityBuilder(this.scene);
+    this.city.setBakedLayouts(options.bakedLayouts);
+    this.previousCityBench = this.loadBuildBenchmark();
 
     this.weapon = new WeaponSystem(this.camera, this.scene);
     this.dinosaurs = new DinosaurManager(this.scene, (x, z) => this.city.getTerrainHeight(x, z), this.assetManager);
@@ -149,7 +151,7 @@ export class Game {
       this.currentPixelRatio = this.pixelRatioMax;
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      this.renderer.toneMappingExposure = 1.2;
+      this.renderer.toneMappingExposure = 1.34;
     } else if (preset === 'performance') {
       this.dynamicQualityEnabled = true;
       this.pixelRatioMin = 0.62;
@@ -157,7 +159,7 @@ export class Game {
       this.currentPixelRatio = Math.min(this.currentPixelRatio, this.pixelRatioMax);
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFShadowMap;
-      this.renderer.toneMappingExposure = 1.05;
+      this.renderer.toneMappingExposure = 1.2;
     } else {
       this.dynamicQualityEnabled = true;
       this.pixelRatioMin = 0.78;
@@ -165,7 +167,7 @@ export class Game {
       this.currentPixelRatio = Math.min(this.currentPixelRatio, this.pixelRatioMax);
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      this.renderer.toneMappingExposure = 1.15;
+      this.renderer.toneMappingExposure = 1.28;
     }
 
     this.renderer.setPixelRatio(this.currentPixelRatio);
@@ -173,6 +175,7 @@ export class Game {
     this.city.configureQuality(preset);
     if (rebuildCity || !this.city.terrain) {
       this.city.build();
+      this.persistBuildBenchmark();
       this.extractionPoint.set(184, this.city.getTerrainHeight(184, -172) + 0.4, -172);
       this.beacon.position.copy(this.extractionPoint);
       if (this.state?.phase !== GamePhase.PLAYING && this.state?.phase !== GamePhase.INTRO) {
@@ -180,11 +183,37 @@ export class Game {
       }
       this.hud.setAssetStatus(
         preset === 'high'
-          ? 'Visual profile: High fidelity'
+          ? 'Visual profile: High fidelity (evening)'
           : preset === 'performance'
-            ? 'Visual profile: Performance optimized'
-            : 'Visual profile: Balanced combat mode'
+            ? 'Visual profile: Performance optimized (evening)'
+            : 'Visual profile: Balanced combat mode (evening)'
       );
+    }
+  }
+
+  loadBuildBenchmark() {
+    try {
+      const raw = window.localStorage.getItem('ruinfall-city-build-benchmark');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  persistBuildBenchmark() {
+    const stats = this.city.getDiagnostics();
+    const entry = {
+      buildMs: stats.buildMs,
+      mode: stats.buildMode,
+      preset: this.activeGraphicsPreset,
+      ts: Date.now()
+    };
+
+    this.previousCityBench = this.loadBuildBenchmark();
+    try {
+      window.localStorage.setItem('ruinfall-city-build-benchmark', JSON.stringify(entry));
+    } catch {
+      // Ignore localStorage failures.
     }
   }
 
@@ -211,11 +240,11 @@ export class Game {
   }
 
   setupLights() {
-    const hemi = new THREE.HemisphereLight(0x89b8ff, 0x0a0d11, 0.55);
+    const hemi = new THREE.HemisphereLight(0xb8ccda, 0x344045, 0.85);
     this.scene.add(hemi);
 
-    const moon = new THREE.DirectionalLight(0xc8dcff, 0.8);
-    moon.position.set(120, 180, 80);
+    const moon = new THREE.DirectionalLight(0xffd9b0, 1.15);
+    moon.position.set(95, 175, 65);
     moon.castShadow = true;
     moon.shadow.camera.left = -260;
     moon.shadow.camera.right = 260;
@@ -455,7 +484,7 @@ export class Game {
 
   update(dt) {
     this.updateDynamicQuality(dt);
-    this.city.update(dt);
+    this.city.update(dt, this.player.position);
     const isAiming = this.state.phase === GamePhase.PLAYING && this.input.isMouseDown(2);
     this.weapon.update(dt, this.player.velocity, isAiming);
     const weaponHud = this.weapon.getHudState();
@@ -502,7 +531,11 @@ export class Game {
     const dt = Math.min(this.clock.getDelta(), 0.033);
     this.fixedLoop.tick(dt, this.fixedUpdate);
     this.render();
-    this.debugOverlay.update(dt, this.renderer);
+    this.debugOverlay.update(dt, this.renderer, {
+      city: this.city.getDiagnostics(),
+      previousBuild: this.previousCityBench,
+      preset: this.activeGraphicsPreset
+    });
     requestAnimationFrame(this.loop);
   };
 

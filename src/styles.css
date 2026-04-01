@@ -418,4 +418,5 @@ button:hover {
   background: rgba(1, 12, 20, 0.72);
   border: 1px solid rgba(126, 214, 255, 0.36);
   padding: 0.3rem 0.42rem;
+  white-space: pre;
 }
