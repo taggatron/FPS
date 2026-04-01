@@ -183,7 +183,19 @@ Performance-oriented architecture is now split under src:
 
 2. Optional ultra-fast static mesh shell (glTF/GLB):
 
-   Export a city shell mesh to public/city-shell.glb.
+   Generate Blender-ready OBJ files from baked layouts:
+
+   npm run export:city-shell
+
+   This writes:
+   - tools/city-shell/city-shell-balanced.obj
+   - tools/city-shell/city-shell-performance.obj
+   - tools/city-shell/city-shell-high.obj
+
+   Blender pipeline:
+   1. Import one OBJ (for your target preset) into Blender.
+   2. Optional: simplify, decimate, merge materials, or add authored details.
+   3. Export as GLB to public/city-shell.glb.
 
    If this file exists, runtime uses the baked shell path (mode shown as glb-shell in debug overlay) and skips heavy procedural skyline/streetlight/prop generation.
 
