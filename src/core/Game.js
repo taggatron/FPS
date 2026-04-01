@@ -55,6 +55,7 @@ export class Game {
 
     this.city = new CityBuilder(this.scene);
     this.city.setBakedLayouts(options.bakedLayouts);
+    this.city.setBakedShell(options.bakedShell);
     this.previousCityBench = this.loadBuildBenchmark();
 
     this.weapon = new WeaponSystem(this.camera, this.scene);
@@ -77,7 +78,7 @@ export class Game {
     });
 
     this.hud.setStartEnabled(false);
-    this.hud.setAssetStatus('Streaming apex signatures 0%');
+    this.hud.setAssetStatus(options.bakedShell ? 'Baked city shell loaded | Streaming apex signatures 0%' : 'Streaming apex signatures 0%');
 
     this.dinosaurs.onLoadingStatus(({ state, progress }) => {
       if (state === 'loading') {

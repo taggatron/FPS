@@ -38,6 +38,7 @@ export class CityBuilder {
     this.layoutCacheVersion = 4;
     this.layoutMemo = null;
     this.bakedLayouts = null;
+    this.bakedShell = null;
     this.lightCullTimer = 0;
     this.performanceStats = {
       buildMs: 0,
@@ -100,6 +101,34 @@ export class CityBuilder {
 
   setBakedLayouts(layouts = {}) {
     this.bakedLayouts = layouts;
+  }
+
+  setBakedShell(shell) {
+    this.bakedShell = shell || null;
+  }
+
+  hasBakedShell() {
+    return !!this.bakedShell;
+  }
+
+  cloneBakedShell() {
+    if (!this.bakedShell) return null;
+
+    const root = this.bakedShell.clone(true);
+    root.traverse((node) => {
+      if (!node.isMesh) return;
+      node.geometry = node.geometry?.clone?.() ?? node.geometry;
+      if (Array.isArray(node.material)) {
+        node.material = node.material.map((material) => material?.clone?.() ?? material);
+      } else {
+        node.material = node.material?.clone?.() ?? node.material;
+      }
+      node.castShadow = true;
+      node.receiveShadow = true;
+      node.frustumCulled = true;
+    });
+
+    return root;
   }
 
   getBakedLayout(key) {
@@ -232,9 +261,19 @@ export class CityBuilder {
     this.addSkyDome();
     this.addGround();
     this.addRoadGrid();
-    this.addSkylineRuins();
-    this.addStreetLights();
-    this.addProps();
+
+    if (this.hasBakedShell()) {
+      const shell = this.cloneBakedShell();
+      if (shell) {
+        this.layoutMemo = { key: 'glb-shell', data: null, mode: 'glb-shell' };
+        this.trackAdd(shell);
+      }
+    } else {
+      this.addSkylineRuins();
+      this.addStreetLights();
+      this.addProps();
+    }
+
     this.addAtmosphericVolumes();
     this.addDustParticles();
     this.addDistantGiants();
@@ -711,7 +750,11 @@ export class CityBuilder {
   }
 
   updateDynamicLightActivation(viewerPosition) {
-    if (!viewerPosition || this.fires.length === 0) return;
+    if (!viewerPosition || this.fires.length === 0) {
+      this.performanceStats.activeDynamicLights = 0;
+      this.performanceStats.totalDynamicLights = this.fires.length;
+      return;
+    }
 
     const maxDistSq = this.profile.dynamicLightDistance * this.profile.dynamicLightDistance;
     const candidates = [];

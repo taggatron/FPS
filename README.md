@@ -173,6 +173,24 @@ Performance-oriented architecture is now split under src:
 - Production build: npm run build
 - Preview build: npm run preview
 
+## Offline Bake Workflow
+
+1. Bake deterministic city layout JSON:
+
+   npm run bake:city
+
+   This writes [public/city-layout.baked.json](public/city-layout.baked.json), which is loaded at runtime before local cache/procedural generation.
+
+2. Optional ultra-fast static mesh shell (glTF/GLB):
+
+   Export a city shell mesh to public/city-shell.glb.
+
+   If this file exists, runtime uses the baked shell path (mode shown as glb-shell in debug overlay) and skips heavy procedural skyline/streetlight/prop generation.
+
+3. Runtime benchmark visibility:
+
+   Debug overlay now reports build mode, build ms, previous build ms, delta, and active/total dynamic lights.
+
 ## Control Summary
 
 - Move: WASD
